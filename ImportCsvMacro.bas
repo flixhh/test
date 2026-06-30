@@ -17,6 +17,17 @@ Attribute VB_Name = "ImportCsvMacro"
 '      dem Timestamp des Ordners angehaengt.
 '
 ' Konfiguration: Siehe Konstanten im Abschnitt "Einstellungen".
+'
+' Empfohlenes Timestamp-Format fuer die Ordnernamen (inkl. Uhrzeit):
+'   YYYY-MM-DD_HH-MM-SS     z. B. 2026-06-30_14-05-30
+'   In VBA erzeugbar mit:   Format(Now, "yyyy-mm-dd_hh-nn-ss")
+'   (Hinweis: in VBA ist "nn" = Minuten, "mm" = Monat.)
+' Wichtig: Stellen muessen von gross nach klein angeordnet sein (Jahr -> Sekunde),
+' damit der alphabetische Vergleich = chronologische Reihenfolge ist und der
+' "aktuellste" Ordner korrekt erkannt wird. Ebenfalls moeglich:
+'   YYYYMMDD_HHMMSS         z. B. 20260630_140530   (kompakt)
+'   YYYY-MM-DD_HH-MM-SS-fff z. B. 2026-06-30_14-05-30-123 (mit Millisekunden)
+' Nicht verwenden: DD.MM.YYYY oder MM-DD-YYYY -> sortieren nicht chronologisch.
 '==============================================================================
 Option Explicit
 
