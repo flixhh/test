@@ -164,32 +164,35 @@ End Function
 
 '==============================================================================
 ' Prueft heuristisch, ob ein Ordnername ein Timestamp ist:
-' beginnt mit mindestens 8 Ziffern (z. B. JahrMonatTag) und enthaelt nur
-' Ziffern und gaengige Trennzeichen (- _ . Leerzeichen :).
+' beginnt mit einer Ziffer (Jahr), enthaelt nur Ziffern und gaengige
+' Trennzeichen (- _ . Leerzeichen :) und hat insgesamt mindestens 8 Ziffern
+' (Datum YYYYMMDD). Trennzeichen sind erlaubt, daher werden sowohl
+' "20260701_143106" als auch "2026-07-01_14-31-06" erkannt.
 '==============================================================================
 Private Function LooksLikeTimestamp(ByVal name As String) As Boolean
-    Dim i As Long, ch As String, digitCount As Long, leadingDigits As Long
-    Dim seenNonDigit As Boolean
+    Dim i As Long, ch As String, digitCount As Long
+
+    If Len(name) = 0 Then Exit Function
+
+    ' Muss mit einer Ziffer beginnen (Jahr).
+    ch = Left$(name, 1)
+    If ch < "0" Or ch > "9" Then Exit Function
 
     digitCount = 0
-    leadingDigits = 0
-    seenNonDigit = False
-
     For i = 1 To Len(name)
         ch = Mid$(name, i, 1)
         If ch >= "0" And ch <= "9" Then
             digitCount = digitCount + 1
-            If Not seenNonDigit Then leadingDigits = leadingDigits + 1
         ElseIf InStr("-_. :", ch) > 0 Then
-            seenNonDigit = True
+            ' erlaubtes Trennzeichen -> ok
         Else
             LooksLikeTimestamp = False
             Exit Function
         End If
     Next i
 
-    ' Mindestens 8 fuehrende Ziffern (Datum) und insgesamt genug Ziffern.
-    LooksLikeTimestamp = (leadingDigits >= 8) And (digitCount >= 8)
+    ' Insgesamt genug Ziffern fuer mindestens ein Datum (YYYYMMDD = 8).
+    LooksLikeTimestamp = (digitCount >= 8)
 End Function
 
 
