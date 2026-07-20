@@ -64,6 +64,9 @@ Public Sub ImportiereCsvDateien()
     Dim importedCount As Long
     Dim skippedCount As Long
     Dim startTime As Date
+    Dim details As String
+    Dim reason As String
+    Dim hint As String
 
     On Error GoTo ErrHandler
 
@@ -101,23 +104,58 @@ Public Sub ImportiereCsvDateien()
     ' --- Schleife ueber alle CSV-Dateien ----------------------------------
     importedCount = 0
     skippedCount = 0
+    details = ""
     For Each file In latestFolder.Files
         If LCase$(fso.GetExtensionName(file.Name)) = "csv" Then
             sheetName = fso.GetBaseName(file.Name)   ' Dateiname ohne ".csv"
-            Set ws = GetOrCreateSheet(wb, sheetName)
 
-            If ws Is Nothing Then
-                skippedCount = skippedCount + 1
+            If SheetExists(wb, sheetName) Then
+                ' Blatt existiert -> leeren und importieren.
+                Set ws = wb.Worksheets(sheetName)
+                reason = ""
+                If TryImport(file.Path, ws, reason) Then
+                    importedCount = importedCount + 1
+                Else
+                    skippedCount = skippedCount + 1
+                    details = details & "- " & file.Name & " -> Blatt '" & sheetName & _
+                              "': " & reason & vbLf
+                End If
+
+            ElseIf Not SKIP_IF_SHEET_MISSING Then
+                ' Blatt fehlt, soll aber angelegt werden.
+                Set ws = GetOrCreateSheet(wb, sheetName)
+                reason = ""
+                If Not ws Is Nothing Then
+                    If TryImport(file.Path, ws, reason) Then
+                        importedCount = importedCount + 1
+                    Else
+                        skippedCount = skippedCount + 1
+                        details = details & "- " & file.Name & " -> neues Blatt '" & _
+                                  sheetName & "': " & reason & vbLf
+                    End If
+                Else
+                    skippedCount = skippedCount + 1
+                    details = details & "- " & file.Name & " -> Blatt '" & sheetName & _
+                              "' konnte nicht angelegt werden" & vbLf
+                End If
+
             Else
-                ws.Cells.Clear                       ' bisherigen Inhalt loeschen
-                ImportCsvIntoSheet file.Path, ws     ' CSV-Inhalt einfuegen
-                importedCount = importedCount + 1
+                ' Blatt fehlt und wird uebersprungen -> Grund + Hinweis protokollieren.
+                skippedCount = skippedCount + 1
+                hint = FindSheetHint(wb, sheetName)
+                details = details & "- " & file.Name & " -> kein Tabellenblatt '" & _
+                          sheetName & "' vorhanden (uebersprungen)"
+                If Len(hint) > 0 Then
+                    details = details & " | Hinweis: aehnliches Blatt '" & hint & _
+                              "' gefunden - Name/Leerzeichen/Gross-Kleinschreibung pruefen"
+                End If
+                details = details & vbLf
             End If
         End If
     Next file
 
     ' --- Log-Zeile schreiben ----------------------------------------------
-    WriteLog wb, startTime, latestTimestamp, importedCount, skippedCount
+    WriteLog wb, startTime, latestTimestamp, importedCount, skippedCount, details
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
@@ -125,7 +163,8 @@ Public Sub ImportiereCsvDateien()
     MsgBox "CSV-Import abgeschlossen." & vbCrLf & vbCrLf & _
            "Ordner (Timestamp): " & latestTimestamp & vbCrLf & _
            "Importiert: " & importedCount & " Datei(en)" & vbCrLf & _
-           "Uebersprungen: " & skippedCount & " Datei(en)", _
+           "Uebersprungen: " & skippedCount & " Datei(en)" & _
+           IIf(Len(details) > 0, vbCrLf & vbCrLf & "Details:" & vbCrLf & details, ""), _
            vbInformation, "CSV-Import"
     Exit Sub
 
@@ -215,6 +254,56 @@ Private Function GetOrCreateSheet(ByVal wb As Workbook, ByVal sheetName As Strin
     End If
 
     Set GetOrCreateSheet = ws
+End Function
+
+
+'==============================================================================
+' Prueft, ob ein Tabellenblatt mit exakt diesem Namen existiert.
+'==============================================================================
+Private Function SheetExists(ByVal wb As Workbook, ByVal sheetName As String) As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets(sheetName)
+    On Error GoTo 0
+    SheetExists = Not (ws Is Nothing)
+End Function
+
+
+'==============================================================================
+' Versucht, die CSV in das Blatt zu importieren. Bei Erfolg True; bei einem
+' Fehler False, wobei "reason" die Fehlerbeschreibung enthaelt. So wird ein
+' einzelner Fehler protokolliert, ohne das gesamte Makro abzubrechen.
+'==============================================================================
+Private Function TryImport(ByVal filePath As String, ByVal ws As Worksheet, _
+                           ByRef reason As String) As Boolean
+    On Error GoTo Failed
+    ws.Cells.Clear                       ' bisherigen Inhalt loeschen
+    ImportCsvIntoSheet filePath, ws      ' CSV-Inhalt einfuegen
+    TryImport = True
+    Exit Function
+Failed:
+    reason = "Fehler beim Import (Nr. " & Err.Number & " - " & Err.Description & ")"
+    TryImport = False
+End Function
+
+
+'==============================================================================
+' Sucht ein Blatt, dessen Name dem gesuchten Namen "aehnlich" ist (gleich nach
+' Trimmen und ohne Beachtung der Gross-/Kleinschreibung). Dient als Hinweis bei
+' typischen Ursachen fuer uebersprungene Dateien (Leerzeichen, Schreibweise).
+' Liefert den tatsaechlichen Blattnamen oder "" wenn keiner passt.
+'==============================================================================
+Private Function FindSheetHint(ByVal wb As Workbook, ByVal sheetName As String) As String
+    Dim ws As Worksheet
+    Dim target As String
+    target = LCase$(Trim$(sheetName))
+    For Each ws In wb.Worksheets
+        If LCase$(Trim$(ws.Name)) = target Then
+            FindSheetHint = ws.Name
+            Exit Function
+        End If
+    Next ws
+    FindSheetHint = ""
 End Function
 
 
@@ -442,9 +531,11 @@ End Function
 '==============================================================================
 Private Sub WriteLog(ByVal wb As Workbook, ByVal execTime As Date, _
                      ByVal folderTimestamp As String, _
-                     ByVal importedCount As Long, ByVal skippedCount As Long)
+                     ByVal importedCount As Long, ByVal skippedCount As Long, _
+                     ByVal details As String)
     Dim logWs As Worksheet
     Dim nextRow As Long
+    Dim detailText As String
 
     On Error Resume Next
     Set logWs = wb.Worksheets(LOG_SHEET_NAME)
@@ -457,15 +548,25 @@ Private Sub WriteLog(ByVal wb As Workbook, ByVal execTime As Date, _
         logWs.Range("B1").Value = "Ordner-Timestamp"
         logWs.Range("C1").Value = "Importierte Dateien"
         logWs.Range("D1").Value = "Uebersprungene Dateien"
-        logWs.Range("A1:D1").Font.Bold = True
+        logWs.Range("E1").Value = "Details (uebersprungen / Fehler)"
+        logWs.Range("A1:E1").Font.Bold = True
     End If
 
     nextRow = logWs.Cells(logWs.Rows.Count, "A").End(xlUp).Row + 1
     If nextRow < 2 Then nextRow = 2
+
+    ' Zeilenumbrueche fuer die Zelle vereinheitlichen und Endezeichen entfernen.
+    detailText = details
+    Do While Len(detailText) > 0 And Right$(detailText, 1) = vbLf
+        detailText = Left$(detailText, Len(detailText) - 1)
+    Loop
+    If Len(detailText) = 0 Then detailText = "OK - alle Dateien importiert"
 
     logWs.Cells(nextRow, "A").Value = execTime
     logWs.Cells(nextRow, "A").NumberFormat = "yyyy-mm-dd hh:mm:ss"
     logWs.Cells(nextRow, "B").Value = folderTimestamp
     logWs.Cells(nextRow, "C").Value = importedCount
     logWs.Cells(nextRow, "D").Value = skippedCount
+    logWs.Cells(nextRow, "E").Value = detailText
+    logWs.Cells(nextRow, "E").WrapText = True
 End Sub
